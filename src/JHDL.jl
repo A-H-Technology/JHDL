@@ -82,7 +82,7 @@ port_index(dut::DUT, name::AbstractString) = findfirst(p -> p.name == name, dut.
 
 # The testbench reads input columns in DUT port order, so stims have to be written in that order too
 function order_stims(dut::DUT, stims::AbstractVector{PortStim})::Vector{PortStim}
-    by_name = foldl(stims; init=Dict{String,PortStim}()) do d, stim
+    by_name = foldl(stims; init=Dict{String,PortStim}()) do d, stim::PortStim
         i = port_index(dut, stim.name)
         isnothing(i) && throw(ArgumentError("Stim \"$(stim.name)\" doesn't match any port of $(dut.name)"))
         port = dut.ports[i]
