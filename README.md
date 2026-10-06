@@ -34,7 +34,6 @@ sim = Simulation(
     stims=[
         PortStim("A", u8, [1, 2, 3], In),
         PortStim("B", u8, [4, 5, 6], In),
-        PortStim("Y", u8, Int[], Out),
     ],
 )
 
@@ -46,11 +45,11 @@ verify(sim, [PortStim("Y", u8, [5, 7, 9], Out)]; latency=1)
 
 The generated testbench drives `CLK` and `RST` for you. It holds reset for 5 cycles, feeds one row of inputs per cycle, and records the outputs on every rising edge. The DUT needs `CLK` and `RST` ports.
 
-Vector outputs come back as integers, or `missing` for samples holding a metavalue (`U`, `X`, `Z`, ...). `compare`/`verify` match outputs by name and skip the first `latency` samples.
+Vector outputs come back as integers, or `missing` for samples holding a metavalue (`U`, `X`, `Z`, ...). Stims are matched to input ports by name, in any order. Outputs are captured from every `Out`/`InOut` port, so don't pass stims for them. A stim shorter than the others is padded with `-` (or 0 for numeric types). `compare`/`verify` match outputs by name and skip the first `latency` samples.
 
 ## Tests
 
-The e2e test builds and simulates a small registered adder (`test/vhdl/adder.vhd`) through GHDL:
+The e2e tests build and simulate two small registered DUTs (`test/vhdl/`) through GHDL. Unit tests cover the field reader/writer, stim matching and `compare`:
 
 ```sh
 julia --project=. test/runtests.jl

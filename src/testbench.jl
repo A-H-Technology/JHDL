@@ -63,22 +63,15 @@ declare(g::Generic) = "$(g.name) : $(g.type)" * (isnothing(g.value) ? "" : " := 
 declare(v::Variable) = "variable $(v.name) : $(v.type)" * (isnothing(v.value) ? "" : " := " * literal(v.type, v.value))
 declare(c::Constant) = "constant $(c.name) : $(c.type)" * (isnothing(c.value) ? "" : " := " * literal(c.type, c.value))
 
-literal(::Union{VHDL.std_logic_vector,VHDL.Signed,VHDL.Unsigned}, x::AbstractVector) = "\""*join(Int.(x))*"\""
-function literal(t::VHDL.Unsigned, x::Integer)
-    w = abs(t.range.first-t.range.last)+1
-    return (x < 0 || x > (2^w)-1) ? throw(ArgumentError("Cannot convert $x to unsigned with $w bits")) : "\""*string(x, base=2, pad=w)*"\""
-end
-function literal(t::VHDL.std_logic_vector, x::Integer)
-    w = abs(t.range.first-t.range.last)+1
-    x < 0 ? (-2^(w-1) <= x || throw(ArgumentError("$x doesn't fit in $w bits"))) : (2^w-1 >= x || throw(ArgumentError("$x doesn't fit in $w bits")))
-    return "\""*string(big(x) & ((big(1) << w) - 1), base=2, pad=w)*"\""
-end
-function literal(t::VHDL.Signed, x::Integer)
-    w = abs(t.range.first-t.range.last)+1
-    x < 0 ? (-2^(w-1) <= x || throw(ArgumentError("$x doesn't fit in $w bits"))) : (2^(w-1)-1 >= x || throw(ArgumentError("$x doesn't fit in $w bits")))
+const VectorType = Union{VHDL.std_logic_vector,VHDL.Signed,VHDL.Unsigned}
 
-    return "\""*string(big(x) & ((big(1) << w) - 1), base=2, pad=w)*"\""
-end
+width(t::VectorType) = abs(t.range.first - t.range.last) + 1
+
+bounds(t::VHDL.Unsigned) = (big(0), (big(1) << width(t)) - 1)
+bounds(t::VHDL.Signed) = (-(big(1) << (width(t) - 1)), (big(1) << (width(t) - 1)) - 1)
+bounds(t::VHDL.std_logic_vector) = (-(big(1) << (width(t) - 1)), (big(1) << width(t)) - 1)
+
+literal(t::VectorType, x) = "\""*write_field(t, x)*"\""
 literal(::VHDL.std_logic, x) = "\'"*string(Int(x))*"\'"
 literal(::VHDL.Character, x) = "\'"*string(x)*"\'"
 literal(::VHDL.String, x) = "\""*string(x)*"\""
@@ -86,37 +79,50 @@ literal(::Union{VHDL.Integer,VHDL.Boolean,VHDL.Positive,VHDL.Natural}, x) = stri
 literal(::VHDL.Time, x) = string(x)*" ns"
 
 
-write_field(::Union{VHDL.std_logic_vector,VHDL.Signed,VHDL.Unsigned}, x::AbstractVector) = join(Int.(x))
+write_field(::VectorType, x::AbstractVector) = join(Int.(x))
 write_field(::Any, x::AbstractString) = string(x)
-function write_field(t::VHDL.Unsigned, x::Integer)
-    w = abs(t.range.first-t.range.last)+1
-    return (x < 0 || x > (2^w)-1) ? throw(ArgumentError("Cannot convert $x to unsigned with $w bits")) : string(x, base=2, pad=w)
+function write_field(t::VectorType, x::Integer)
+    lo, hi = bounds(t)
+    lo <= x <= hi || throw(ArgumentError("$x doesn't fit in $t"))
+    return string(big(x) & ((big(1) << width(t)) - 1), base=2, pad=width(t))
 end
-function write_field(t::VHDL.std_logic_vector, x::Integer)
-    w = abs(t.range.first-t.range.last)+1
-    x < 0 ? (-2^(w-1) <= x || throw(ArgumentError("$x doesn't fit in $w bits"))) : (2^w-1 >= x || throw(ArgumentError("$x doesn't fit in $w bits")))
-    return string(big(x) & ((big(1) << w) - 1), base=2, pad=w)
-end
-function write_field(t::VHDL.Signed, x::Integer)
-    w = abs(t.range.first-t.range.last)+1
-    x < 0 ? (-2^(w-1) <= x || throw(ArgumentError("$x doesn't fit in $w bits"))) : (2^(w-1)-1 >= x || throw(ArgumentError("$x doesn't fit in $w bits")))
+write_field(::VHDL.std_logic, x::Integer) = string(Int(x))
+write_field(::Union{VHDL.std_logic,VHDL.Character}, x::Char) = string(x)
+write_field(::Union{VHDL.Integer,VHDL.Boolean,VHDL.Positive,VHDL.Natural}, x::Integer) = string(x)
+write_field(::VHDL.Time, x::Real) = string(x)*" ns"
 
-    return string(big(x) & ((big(1) << w) - 1), base=2, pad=w)
-end
-write_field(::Union{VHDL.Integer,VHDL.Boolean,VHDL.Positive,VHDL.Natural,VHDL.std_logic,VHDL.Character,VHDL.String,VHDL.Time}, x) = string(x)
-write_field(::VHDL.std_logic, ::Nothing) = "-"
-write_field(t::VHDL.std_logic_vector, ::Nothing) = "-"^(abs(t.range.first-t.range.last)+1)
-write_field(t, x::Nothing) = write_field(t, 0)
+pad_field(::VHDL.std_logic) = "-"
+pad_field(t::VHDL.std_logic_vector) = "-"^width(t)
+pad_field(t::Union{VHDL.Signed,VHDL.Unsigned}) = write_field(t, 0)
+pad_field(::Union{VHDL.Integer,VHDL.Natural}) = "0"
+pad_field(::VHDL.Positive) = "1"
+pad_field(::VHDL.Boolean) = "false"
+pad_field(::VHDL.Time) = "0 ns"
+pad_field(t::VHDL.VHDLType) = throw(ArgumentError("Can't pad $t inputs, give them the same length as the other stims"))
 
-read_field(t::Union{VHDL.Integer,VHDL.Positive,VHDL.Natural,VHDL.Time}, x) = isnothing(tryparse(Int, x)) ? throw(ArgumentError("Cannot convert $x to a boolean")) : parse(Int, x)
-read_field(t::VHDL.Boolean, x) = x == 1 ? true : (x == 0 ? false : throw(ArgumentError("Cannot convert $x to a boolean")))
+field_tokens(::VHDL.Time) = 2
+field_tokens(::VHDL.VHDLType) = 1
+
+const time_units_ns = Dict("fs" => 1e-6, "ps" => 1e-3, "ns" => 1.0, "us" => 1e3, "ms" => 1e6, "sec" => 1e9, "min" => 60e9, "hr" => 3600e9)
+
+function read_field(t::Union{VHDL.Integer,VHDL.Positive,VHDL.Natural}, x::AbstractString)
+    n = tryparse(Int, x)
+    return isnothing(n) ? throw(ArgumentError("Cannot convert $x to $t")) : n
+end
+function read_field(t::VHDL.Time, x::AbstractString)
+    parts = split(x)
+    v = length(parts) == 2 ? tryparse(Float64, parts[1]) : nothing
+    (isnothing(v) || !haskey(time_units_ns, lowercase(parts[2]))) && throw(ArgumentError("Cannot convert $x to a time"))
+    return v * time_units_ns[lowercase(parts[2])]
+end
+function read_field(t::VHDL.Boolean, x::AbstractString)
+    lowercase(x) == "true" && return true
+    lowercase(x) == "false" && return false
+    throw(ArgumentError("Cannot convert $x to a boolean"))
+end
 read_field(t::VHDL.std_logic, x::AbstractString) = (length(x) == 1 && x[1] in std_vals) ? x[1] : throw(ArgumentError("Cannot convert $x to an std_logic"))
-read_field(t::VHDL.std_logic, x::Char) = (x[1] in std_vals) ? x : throw(ArgumentError("Cannot convert $x to an std_logic"))
-read_field(t::VHDL.std_logic, x::Integer) = (x == 1 || x == 0) ? Char(x) : throw(ArgumentError("Cannot convert $x to an std_logic"))
 
-width(t::Union{VHDL.std_logic_vector,VHDL.Signed,VHDL.Unsigned}) = abs(t.range.first - t.range.last) + 1
-
-function read_field(t::Union{VHDL.std_logic_vector,VHDL.Signed,VHDL.Unsigned}, x::AbstractString)
+function read_field(t::VectorType, x::AbstractString)
     w = width(t)
     (length(x) == w && all(in(std_vals), x)) || throw(ArgumentError("Cannot convert \"$x\" to $t"))
     all(in(('0', '1')), x) || return missing
@@ -125,17 +131,14 @@ function read_field(t::Union{VHDL.std_logic_vector,VHDL.Signed,VHDL.Unsigned}, x
     return w < 64 ? Int(n) : n
 end
 
-read_field(t::VHDL.String, x) = string(x)
+read_field(t::VHDL.String, x::AbstractString) = string(x)
 read_field(t::VHDL.Character, x::AbstractString) = (length(x) == 1) ? x[1] : throw(ArgumentError("Cannot convert $x to a character"))
-read_field(t::VHDL.Character, x::Char) = x
-read_field(t::VHDL.Character, x::Integer) = 0 <= x < 10 ? string(x)[1] : throw(ArgumentError("Cannot convert $x to a character"))
 
 
 function construct_testbench(testbench::Testbench; directory::AbstractString="build")
     input_file::Generic = Generic("INPUT_FILE", VHDL.String(), "samples.txt")
     output_file::Generic = Generic("OUTPUT_FILE", VHDL.String(), "output.txt")
-    root_dir = abspath(".")
-    tb_dir = root_dir*"/"*directory*"/"
+    tb_dir = abspath(directory)
     mkpath(tb_dir)
 
     lines = String[]

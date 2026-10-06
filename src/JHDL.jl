@@ -54,9 +54,8 @@ function simulate(sim::Simulation)::AbstractVector{PortStim}
     input_path = joinpath(build_directory, sim.input_path)
     output_path = joinpath(build_directory, sim.output_path)
 
-    inputs = filter(x -> ((x.dir == In) || (x.dir == InOut)), sim.stims)
-    # Fresh vectors so reading results never mutates the caller's stims
-    outputs = [PortStim(x.name, x.type, Any[], x.dir) for x in sim.stims if x.dir == Out || x.dir == InOut]
+    inputs = order_stims(sim.testbench.dut, sim.stims)
+    outputs = [PortStim(p.name, p.type, Any[], p.dir) for p in sim.testbench.dut.ports if p.dir == Out || p.dir == InOut]
 
     mkpath(build_directory)
 
@@ -75,6 +74,23 @@ function simulate(sim::Simulation)::AbstractVector{PortStim}
     isfile(output_path) || throw(ErrorException("The testbench did not produce \"$(sim.output_path)\""))
 
     return read_test_data!(outputs, output_path)
+end
+
+
+# The testbench reads input columns in DUT port order, so stims have to be written in that order too
+function order_stims(dut::DUT, stims::AbstractVector{PortStim})::Vector{PortStim}
+    for (i, stim) in enumerate(stims)
+        port = findfirst(p -> p.name == stim.name, dut.ports)
+        isnothing(port) && throw(ArgumentError("Stim \"$(stim.name)\" doesn't match any port of $(dut.name)"))
+        dut.ports[port].dir == Out && throw(ArgumentError("Stim \"$(stim.name)\" is an output; outputs are captured, not stimulated"))
+        stim.dir == dut.ports[port].dir || throw(ArgumentError("Stim \"$(stim.name)\" is $(stim.dir) but the port is $(dut.ports[port].dir)"))
+        stim.type == dut.ports[port].type || throw(ArgumentError("Stim \"$(stim.name)\" is $(stim.type) but the port is $(dut.ports[port].type)"))
+        any(s -> s.name == stim.name, stims[1:i-1]) && throw(ArgumentError("Stim \"$(stim.name)\" is given twice"))
+    end
+    return map(filter(p -> p.dir == In || p.dir == InOut, dut.ports)) do port
+        i = findfirst(s -> s.name == port.name, stims)
+        isnothing(i) ? throw(ArgumentError("No stim for input \"$(port.name)\" of $(dut.name)")) : stims[i]
+    end
 end
 
 
@@ -113,12 +129,12 @@ end
 
 
 function write_test_data(data::AbstractVector{PortStim}, filename::AbstractString="samples.txt")::Nothing
-    N = maximum(map(x -> length(x.value), data))
+    N = maximum(x -> length(x.value), data; init=0)
     open(filename, "w") do io
         for i in 1:N
             for port in data
                 if (i > length(port.value))
-                    print(io, write_field(port.type, nothing) * " ")
+                    print(io, pad_field(port.type) * " ")
                 else
                     print(io, write_field(port.type, port.value[i]) * " ")
                 end
@@ -132,18 +148,22 @@ end
 function read_test_data!(output::AbstractVector{PortStim}, filename::AbstractString="results.txt",)
     open(filename, "r") do io
         for (line_number, line) in enumerate(eachline(io))
-            stripped_line = strip(line)
+            tokens = split(line)
 
-            isempty(stripped_line) && continue
+            isempty(tokens) && continue
 
-            fields = strip.(split(stripped_line, " "))
+            expected = sum(x -> field_tokens(x.type), output; init=0)
+            length(tokens) == expected || throw(ArgumentError("Line $line_number of \"$filename\" has $(length(tokens)) fields, expected $expected"))
 
-            for i in eachindex(fields)
+            k = 1
+            for port in output
+                n = field_tokens(port.type)
                 try
-                    push!(output[i].value, read_field(output[i].type, fields[i]))
+                    push!(port.value, read_field(port.type, join(tokens[k:k+n-1], " ")))
                 catch err
-                    throw(ArgumentError("Failed to parse field $i of line $line_number of \"$filename\"."*sprint(showerror, err)))
+                    throw(ArgumentError("Failed to parse $(port.name) on line $line_number of \"$filename\". "*sprint(showerror, err)))
                 end
+                k += n
             end
         end
     end
@@ -154,7 +174,7 @@ end
 function convert_generics(generics::AbstractVector{Generic})::Vector{String}
     generics_strings = String[]
     for generic in generics
-        push!(generics_strings, "-g$(generic)=$(write_field(generic.type,generic.value))")
+        push!(generics_strings, "-g$(generic.name)=$(write_field(generic.type,generic.value))")
     end
     return generics_strings
 end

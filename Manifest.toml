@@ -1,0 +1,10 @@
+# This file is machine-generated - editing it directly is not advised
+
+julia_version = "1.12.7"
+manifest_format = "2.0"
+project_hash = "bd8ee2ede207d7d84caca46c63e2a4d95a84ce41"
+
+[[deps.JHDL]]
+path = "."
+uuid = "6553cf94-aa48-41cb-aa4d-70f1d3ad81e6"
+version = "0.1.0"
