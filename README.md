@@ -9,6 +9,8 @@ You describe your DUT and its ports in Julia, JHDL generates a VHDL-2008 testben
 - Julia
 - GHDL on your `PATH`
 
+On Nix, `nix develop` gives you both.
+
 ## Example
 
 ```julia
@@ -49,7 +51,7 @@ The e2e test builds and simulates a small registered adder (`test/vhdl/adder.vhd
 julia test/runtests.jl
 ```
 
-On Nix, run `nix shell nixpkgs#ghdl --command julia test/runtests.jl`.
+On Nix, `nix flake check` runs it in a sandbox.
 
 ## Status
 
