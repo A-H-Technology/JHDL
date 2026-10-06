@@ -78,18 +78,20 @@ function simulate(sim::Simulation)::AbstractVector{PortStim}
 end
 
 
+port_index(dut::DUT, name::AbstractString) = findfirst(p -> p.name == name, dut.ports)
+
 # The testbench reads input columns in DUT port order, so stims have to be written in that order too
 function order_stims(dut::DUT, stims::AbstractVector{PortStim})::Vector{PortStim}
-    by_name = Dict{String,PortStim}()
-    for stim in stims
-        i = findfirst(p -> p.name == stim.name, dut.ports)
+    by_name = foldl(stims; init=Dict{String,PortStim}()) do d, stim
+        i = port_index(dut, stim.name)
         isnothing(i) && throw(ArgumentError("Stim \"$(stim.name)\" doesn't match any port of $(dut.name)"))
         port = dut.ports[i]
         port.dir == Out && throw(ArgumentError("Stim \"$(stim.name)\" is an output; outputs are captured, not stimulated"))
         stim.dir == port.dir || throw(ArgumentError("Stim \"$(stim.name)\" is $(stim.dir) but the port is $(port.dir)"))
         stim.type == port.type || throw(ArgumentError("Stim \"$(stim.name)\" is $(stim.type) but the port is $(port.type)"))
-        haskey(by_name, stim.name) && throw(ArgumentError("Stim \"$(stim.name)\" is given twice"))
-        by_name[stim.name] = stim
+        haskey(d, stim.name) && throw(ArgumentError("Stim \"$(stim.name)\" is given twice"))
+        d[stim.name] = stim
+        d
     end
     inputs = PortStim[]
     for port in dut.ports
