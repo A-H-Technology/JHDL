@@ -42,8 +42,8 @@ Base.@kwdef struct DUT
     name::String
     generics::Vector{Generic}
     ports::Vector{Port}
-    clk::Port = Port("CLK", VHDLType.std_logic(), 0, In)
-    rst::Port = Port("RST", VHDLType.std_logic(), 1, In)
+    clk::Port = Port("CLK", VHDL.std_logic(), 0, In)
+    rst::Port = Port("RST", VHDL.std_logic(), 1, In)
 end
 
 Base.@kwdef struct Testbench
@@ -104,8 +104,8 @@ function write_field(t::VHDL.Signed, x::Integer)
     return string(big(x) & ((big(1) << w) - 1), base=2, pad=w)
 end
 write_field(::Union{VHDL.Integer,VHDL.Boolean,VHDL.Positive,VHDL.Natural,VHDL.std_logic,VHDL.Character,VHDL.String,VHDL.Time}, x) = string(x)
-write_field(::std_logic, ::Nothing) = write_field(std_logic(), '-')
-write_field(t::std_logic_vector, ::Nothing) = map(x -> write_field.(std_logic(), '-'), 1:(abs(t.range.first-t.range.last)+1))
+write_field(::VHDL.std_logic, ::Nothing) = "-"
+write_field(t::VHDL.std_logic_vector, ::Nothing) = "-"^(abs(t.range.first-t.range.last)+1)
 write_field(t, x::Nothing) = write_field(t, 0)
 
 read_field(t::Union{VHDL.Integer,VHDL.Positive,VHDL.Natural,VHDL.Time}, x) = isnothing(tryparse(Int, x)) ? throw(ArgumentError("Cannot convert $x to a boolean")) : parse(Int, x)
@@ -144,7 +144,7 @@ function construct_testbench(testbench::Testbench; directory::AbstractString="bu
 
     # Entity Declaration
     push!(lines, "entity $(testbench.name)  is")
-    generics = vcat(testbench.generics, testbench.dut.generics, input_file.name, output_file.name)
+    generics = vcat(testbench.generics, testbench.dut.generics, input_file, output_file)
     if !(isempty(generics))
         N = length(generics)
         push!(lines, "generic (")

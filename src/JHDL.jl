@@ -29,7 +29,8 @@ function simulate(sim::Simulation)::AbstractVector{PortStim}
     output_path = joinpath(build_directory, sim.output_path)
 
     inputs = filter(x -> ((x.dir == In) || (x.dir == InOut)), sim.stims)
-    outputs = filter(x -> ((x.dir == Out) || (x.dir == InOut)), sim.stims)
+    # Fresh vectors so reading results never mutates the caller's stims
+    outputs = [PortStim(x.name, x.type, Any[], x.dir) for x in sim.stims if x.dir == Out || x.dir == InOut]
 
     mkpath(build_directory)
 
@@ -47,7 +48,7 @@ function simulate(sim::Simulation)::AbstractVector{PortStim}
 
     isfile(output_path) || throw(ErrorException("The testbench did not produce \"$(sim.output_path)\""))
 
-    return read_test_data(outputs, output_path)
+    return read_test_data!(outputs, output_path)
 end
 
 
@@ -90,13 +91,13 @@ function write_test_data(data::AbstractVector{PortStim}, filename::AbstractStrin
     open(filename, "w") do io
         for i in 1:N
             for port in data
-                if (i > length(port.x.value))
+                if (i > length(port.value))
                     print(io, write_field(port.type, nothing) * " ")
                 else
-                    print(io, write_field(port.type, port.x.value[i]) * " ")
+                    print(io, write_field(port.type, port.value[i]) * " ")
                 end
             end
-            println()
+            println(io)
         end
     end
     return nothing
@@ -120,7 +121,7 @@ function read_test_data!(output::AbstractVector{PortStim}, filename::AbstractStr
             end
         end
     end
-    return data
+    return output
 end
 
 
@@ -149,7 +150,7 @@ function GHDL_build(sim::Simulation)::Nothing
 
     run(Cmd(
         `ghdl -m --std=08
-            $(sim.name)`;
+            $(sim.testbench.name)`;
         dir=build_directory
     ))
     return nothing
@@ -170,10 +171,10 @@ function GHDL_run(sim::Simulation)::Nothing
 
     run(Cmd(
         `ghdl -r --std=08
-            $(sim.name)
+            $(sim.testbench.name)
             $generics
             $wave_args
-            --stop-time=$(sim.stop_time)`;
+            --stop-time=$(sim.stop_time_ms)ms`;
         dir=build_directory
     ))
     return nothing
