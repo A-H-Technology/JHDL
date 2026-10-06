@@ -1,6 +1,6 @@
 using Test
 using JHDL
-import JHDL: write_field, read_field, write_test_data, read_test_data!, convert_generics, order_stims
+import JHDL: convert_generics, order_stims, read_field, read_test_data!, write_field, write_test_data
 
 const u8 = VHDL.Unsigned(VHDL.Range(7, 0))
 const s8 = VHDL.Signed(VHDL.Range(7, 0))

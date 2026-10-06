@@ -1,7 +1,8 @@
 module JHDL
 
-export VHDL, Direction, In, Out, InOut, Port, PortStim, Constant, Generic, Variable, DUT, Testbench,
-    Simulation, construct_testbench, simulate, verify, compare, to_Q_format
+export Constant, DUT, Direction, Generic, In, InOut, Out, Port, PortStim, Simulation,
+    Testbench, VHDL, Variable, compare, construct_testbench, simulate, to_Q_format,
+    verify
 
 include("testbench.jl")
 
@@ -79,18 +80,24 @@ end
 
 # The testbench reads input columns in DUT port order, so stims have to be written in that order too
 function order_stims(dut::DUT, stims::AbstractVector{PortStim})::Vector{PortStim}
-    for (i, stim) in enumerate(stims)
-        port = findfirst(p -> p.name == stim.name, dut.ports)
-        isnothing(port) && throw(ArgumentError("Stim \"$(stim.name)\" doesn't match any port of $(dut.name)"))
-        dut.ports[port].dir == Out && throw(ArgumentError("Stim \"$(stim.name)\" is an output; outputs are captured, not stimulated"))
-        stim.dir == dut.ports[port].dir || throw(ArgumentError("Stim \"$(stim.name)\" is $(stim.dir) but the port is $(dut.ports[port].dir)"))
-        stim.type == dut.ports[port].type || throw(ArgumentError("Stim \"$(stim.name)\" is $(stim.type) but the port is $(dut.ports[port].type)"))
-        any(s -> s.name == stim.name, stims[1:i-1]) && throw(ArgumentError("Stim \"$(stim.name)\" is given twice"))
+    by_name = Dict{String,PortStim}()
+    for stim in stims
+        i = findfirst(p -> p.name == stim.name, dut.ports)
+        isnothing(i) && throw(ArgumentError("Stim \"$(stim.name)\" doesn't match any port of $(dut.name)"))
+        port = dut.ports[i]
+        port.dir == Out && throw(ArgumentError("Stim \"$(stim.name)\" is an output; outputs are captured, not stimulated"))
+        stim.dir == port.dir || throw(ArgumentError("Stim \"$(stim.name)\" is $(stim.dir) but the port is $(port.dir)"))
+        stim.type == port.type || throw(ArgumentError("Stim \"$(stim.name)\" is $(stim.type) but the port is $(port.type)"))
+        haskey(by_name, stim.name) && throw(ArgumentError("Stim \"$(stim.name)\" is given twice"))
+        by_name[stim.name] = stim
     end
-    return map(filter(p -> p.dir == In || p.dir == InOut, dut.ports)) do port
-        i = findfirst(s -> s.name == port.name, stims)
-        isnothing(i) ? throw(ArgumentError("No stim for input \"$(port.name)\" of $(dut.name)")) : stims[i]
+    inputs = PortStim[]
+    for port in dut.ports
+        port.dir == Out && continue
+        haskey(by_name, port.name) || throw(ArgumentError("No stim for input \"$(port.name)\" of $(dut.name)"))
+        push!(inputs, by_name[port.name])
     end
+    return inputs
 end
 
 

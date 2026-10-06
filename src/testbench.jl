@@ -109,18 +109,18 @@ function read_field(t::Union{VHDL.Integer,VHDL.Positive,VHDL.Natural}, x::Abstra
     n = tryparse(Int, x)
     return isnothing(n) ? throw(ArgumentError("Cannot convert $x to $t")) : n
 end
-function read_field(t::VHDL.Time, x::AbstractString)
+function read_field(::VHDL.Time, x::AbstractString)
     parts = split(x)
     v = length(parts) == 2 ? tryparse(Float64, parts[1]) : nothing
     (isnothing(v) || !haskey(time_units_ns, lowercase(parts[2]))) && throw(ArgumentError("Cannot convert $x to a time"))
     return v * time_units_ns[lowercase(parts[2])]
 end
-function read_field(t::VHDL.Boolean, x::AbstractString)
+function read_field(::VHDL.Boolean, x::AbstractString)
     lowercase(x) == "true" && return true
     lowercase(x) == "false" && return false
     throw(ArgumentError("Cannot convert $x to a boolean"))
 end
-read_field(t::VHDL.std_logic, x::AbstractString) = (length(x) == 1 && x[1] in std_vals) ? x[1] : throw(ArgumentError("Cannot convert $x to an std_logic"))
+read_field(::VHDL.std_logic, x::AbstractString) = (length(x) == 1 && x[1] in std_vals) ? x[1] : throw(ArgumentError("Cannot convert $x to an std_logic"))
 
 function read_field(t::VectorType, x::AbstractString)
     w = width(t)
@@ -131,8 +131,8 @@ function read_field(t::VectorType, x::AbstractString)
     return w < 64 ? Int(n) : n
 end
 
-read_field(t::VHDL.String, x::AbstractString) = string(x)
-read_field(t::VHDL.Character, x::AbstractString) = (length(x) == 1) ? x[1] : throw(ArgumentError("Cannot convert $x to a character"))
+read_field(::VHDL.String, x::AbstractString) = string(x)
+read_field(::VHDL.Character, x::AbstractString) = (length(x) == 1) ? x[1] : throw(ArgumentError("Cannot convert $x to a character"))
 
 
 function construct_testbench(testbench::Testbench; directory::AbstractString="build")
