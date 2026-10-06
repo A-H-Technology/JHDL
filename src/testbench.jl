@@ -113,12 +113,17 @@ read_field(t::VHDL.Boolean, x) = x == 1 ? true : (x == 0 ? false : throw(Argumen
 read_field(t::VHDL.std_logic, x::AbstractString) = (length(x) == 1 && x[1] in std_vals) ? x[1] : throw(ArgumentError("Cannot convert $x to an std_logic"))
 read_field(t::VHDL.std_logic, x::Char) = (x[1] in std_vals) ? x : throw(ArgumentError("Cannot convert $x to an std_logic"))
 read_field(t::VHDL.std_logic, x::Integer) = (x == 1 || x == 0) ? Char(x) : throw(ArgumentError("Cannot convert $x to an std_logic"))
-read_field(t::Union{VHDL.std_logic_vector,VHDL.Signed,VHDL.Unsigned}, x::Integer) = x
-read_field(t::VHDL.std_logic_vector, x::AbstractString) = isnothing(tryparse(Int, x, base=2)) ? join(read_field.(VHDL.std_logic(), (split(string(x), "")))) : tryparse(Int, x, base=2)
-read_field(t::VHDL.std_logic_vector, x::AbstractVector) = isnothing(tryparse(Int, join(Int.(x)), base=2)) ? throw(ArgumentError("Cannot convert $x to an std_logic_vector")) : tryparse(Int, join(Int.(x)), base=2)
 
-read_field(t::Union{VHDL.Signed,VHDL.Unsigned}, x::AbstractString) = isnothing(tryparse(Int, x, base=2)) ? (isnothing(tryparse(Int, x)):throw(ArgumentError("Cannot convert $x to $(typeof(t))"))) : tryparse(Int, x, base=2)
-read_field(t::Union{VHDL.Signed,VHDL.Unsigned}, x::AbstractVector) = isnothing(tryparse(Int, join(Int.(x)), base=2)) ? (isnothing(tryparse(Int, join(Int.(x)))) ? throw(ArgumentError("Cannot convert $x to $(typeof(t))")) : tryparse(Int, join(Int.(x)))) : tryparse(Int, join(Int.(x)), base=2)
+width(t::Union{VHDL.std_logic_vector,VHDL.Signed,VHDL.Unsigned}) = abs(t.range.first - t.range.last) + 1
+
+function read_field(t::Union{VHDL.std_logic_vector,VHDL.Signed,VHDL.Unsigned}, x::AbstractString)
+    w = width(t)
+    (length(x) == w && all(in(std_vals), x)) || throw(ArgumentError("Cannot convert \"$x\" to $t"))
+    all(in(('0', '1')), x) || return missing
+    n = parse(BigInt, x; base=2)
+    t isa VHDL.Signed && x[1] == '1' && (n -= big(1) << w)
+    return w < 64 ? Int(n) : n
+end
 
 read_field(t::VHDL.String, x) = string(x)
 read_field(t::VHDL.Character, x::AbstractString) = (length(x) == 1) ? x[1] : throw(ArgumentError("Cannot convert $x to a character"))

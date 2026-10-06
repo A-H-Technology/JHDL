@@ -2,3 +2,9 @@ name = "JHDL"
 uuid = "6553cf94-aa48-41cb-aa4d-70f1d3ad81e6"
 version = "0.1.0"
 authors = ["Hannah <ThatHannahFIeld@gmail.com>"]
+
+[extras]
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Test"]

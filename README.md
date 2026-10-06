@@ -14,7 +14,7 @@ On Nix, `nix develop` gives you both.
 ## Example
 
 ```julia
-include("src/JHDL.jl")
+using JHDL   # with `julia --project=path/to/JHDL`, or after `Pkg.develop`
 
 u8 = VHDL.Unsigned(VHDL.Range(7, 0))
 
@@ -39,20 +39,25 @@ sim = Simulation(
 )
 
 outputs = simulate(sim)   # Y's captured values, one per clock cycle
+
+# Y is registered, so its first valid sample comes one cycle in
+verify(sim, [PortStim("Y", u8, [5, 7, 9], Out)]; latency=1)
 ```
 
 The generated testbench drives `CLK` and `RST` for you. It holds reset for 5 cycles, feeds one row of inputs per cycle, and records the outputs on every rising edge. The DUT needs `CLK` and `RST` ports.
+
+Vector outputs come back as integers, or `missing` for samples holding a metavalue (`U`, `X`, `Z`, ...). `compare`/`verify` match outputs by name and skip the first `latency` samples.
 
 ## Tests
 
 The e2e test builds and simulates a small registered adder (`test/vhdl/adder.vhd`) through GHDL:
 
 ```sh
-julia test/runtests.jl
+julia --project=. test/runtests.jl
 ```
 
 On Nix, `nix flake check` runs it in a sandbox.
 
 ## Status
 
-Work in progress. `compare`/`verify` aren't implemented yet.
+Work in progress.

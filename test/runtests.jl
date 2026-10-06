@@ -1,6 +1,6 @@
 using Test
 
-include(joinpath(@__DIR__, "..", "src", "JHDL.jl"))
+using JHDL
 
 const u8 = VHDL.Unsigned(VHDL.Range(7, 0))
 
@@ -47,12 +47,9 @@ const u8 = VHDL.Unsigned(VHDL.Range(7, 0))
         )
 
         outputs = simulate(sim)
-        y = only(filter(p -> p.name == "Y", outputs)).value
 
-        # The DUT is registered, so the sums show up a cycle or so after the
-        # inputs and are padded with reset/drain samples on either side.
-        # Don't pin the latency, just require every sum in order.
-        expected = a .+ b
-        @test any(i -> y[i:i+length(expected)-1] == expected, 1:length(y)-length(expected)+1)
+        # The first sample is captured on the same edge the first inputs are applied
+        @test compare([PortStim("Y", u8, a .+ b, Out)], outputs; latency=1)
+        @test !compare([PortStim("Y", u8, a .+ b, Out)], outputs; latency=0)
     end
 end

@@ -1,5 +1,9 @@
+module JHDL
+
+export VHDL, Direction, In, Out, InOut, Port, PortStim, Constant, Generic, Variable, DUT, Testbench,
+    Simulation, construct_testbench, simulate, verify, compare, to_Q_format
+
 include("testbench.jl")
-using .VHDL
 
 abstract type Frame end
 
@@ -18,9 +22,31 @@ Base.@kwdef struct Simulation
     stims::Vector{PortStim}
 end
 
-function compare(expected::AbstractVector{PortStim}, actual::AbstractVector{PortStim}; tol::Union{Real,Nothing}=nothing)
-    throw(ArgumentError("compare is not implemented for this simulation"))
+function compare(expected::AbstractVector{PortStim}, actual::AbstractVector{PortStim}; tol::Union{Real,Nothing}=nothing, latency::Integer=0)::Bool
+    latency >= 0 || throw(ArgumentError("latency must be nonnegative"))
+    passed = true
+    for e in expected
+        i = findfirst(a -> a.name == e.name, actual)
+        isnothing(i) && throw(ArgumentError("No captured output named \"$(e.name)\""))
+        got = actual[i].value[latency+1:end]
+        if length(got) < length(e.value)
+            println("$(e.name): expected $(length(e.value)) samples, only $(length(got)) captured after latency $latency")
+            passed = false
+            continue
+        end
+        for (k, (want, have)) in enumerate(zip(e.value, got))
+            if !sample_matches(want, have, tol)
+                println("$(e.name)[$k]: expected $(repr(want)), got $(repr(have))")
+                passed = false
+                break
+            end
+        end
+    end
+    return passed
 end
+
+sample_matches(want::Real, have::Real, tol::Real) = abs(want - have) <= tol
+sample_matches(want, have, _) = isequal(want, have)
 
 function simulate(sim::Simulation)::AbstractVector{PortStim}
     build_directory = abspath(sim.build_directory)
@@ -52,13 +78,13 @@ function simulate(sim::Simulation)::AbstractVector{PortStim}
 end
 
 
-function verify(sim::Simulation, expected::AbstractVector{PortStim}, tol::Union{Real,Nothing}=nothing)::Bool
+function verify(sim::Simulation, expected::AbstractVector{PortStim}; tol::Union{Real,Nothing}=nothing, latency::Integer=0)::Bool
 
     actual = simulate(sim)
 
     println("Comparing results...")
 
-    passed = compare(expected, actual; tol=tol)
+    passed = compare(expected, actual; tol=tol, latency=latency)
 
     println(passed ? "PASS" : "FAIL")
 
@@ -180,3 +206,5 @@ function GHDL_run(sim::Simulation)::Nothing
     return nothing
 end
 
+
+end

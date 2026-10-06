@@ -27,7 +27,7 @@
         e2e = pkgs.runCommand "jhdl-e2e" { nativeBuildInputs = deps pkgs; } ''
           export HOME=$TMPDIR
           cp -r ${self}/. src && chmod -R u+w src && cd src
-          julia test/runtests.jl
+          julia --project=. test/runtests.jl
           touch $out
         '';
       });
