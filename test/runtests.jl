@@ -101,6 +101,58 @@ end
     end
 end
 
+
+const sl = VHDL.std_logic()
+
+function counter_sim(build; en, limit, finish_on=nothing, drain=20)
+    dut = DUT(
+        name="counter",
+        generics=[Generic("LIMIT", VHDL.Natural(), 255)],
+        ports=[Port("EN", sl, 0, In), Port("COUNT", u8, nothing, Out), Port("DONE", sl, nothing, Out)],
+    )
+    tb = Testbench(name="counter_tb", generics=Generic[], constants=Constant[], signals=Port[], dut=dut,
+        drain_cycles=Constant("DRAIN_CYCLES", VHDL.Integer(), drain), finish_on=finish_on)
+    construct_testbench(tb; directory=build)
+    return Simulation(
+        testbench=tb,
+        sources=[joinpath(@__DIR__, "vhdl", "counter.vhd"), joinpath(build, "counter_tb.vhd")],
+        build_directory=build,
+        generics=[Generic("LIMIT", VHDL.Natural(), limit)],
+        stims=[PortStim("EN", sl, en, In)],
+    )
+end
+
+@testset "e2e: inputs return to their initial value after the stim" begin
+    mktempdir() do build
+        out = simulate(counter_sim(build; en=[1, 1, 1], limit=255))
+        count = out[1].value
+        # EN held at '1' would keep counting through the 20 drain cycles
+        @test count[end] == 3
+    end
+end
+
+@testset "e2e: finish_on ends the simulation on the first edge it's high" begin
+    mktempdir() do build
+        out = simulate(counter_sim(build; en=fill(1, 10), limit=4, finish_on="DONE", drain=1000))
+        count, done = out[1].value, out[2].value
+        @test done[end] == '1' && count[end] == 4
+        @test all(==('0'), done[1:end-1])
+        @test length(done) == 5
+    end
+end
+
+@testset "finish_on validation" begin
+    dut = DUT(name="d", generics=Generic[], ports=[Port("A", u8, 0, In), Port("Y", u8, 0, Out), Port("D", sl, 0, Out)])
+    tb(f) = Testbench(name="d_tb", generics=Generic[], constants=Constant[], signals=Port[], dut=dut, finish_on=f)
+    mktempdir() do build
+        @test_throws ArgumentError construct_testbench(tb("NOPE"); directory=build)
+        @test_throws ArgumentError construct_testbench(tb("A"); directory=build)
+        @test_throws ArgumentError construct_testbench(tb("Y"); directory=build)
+        construct_testbench(tb("D"); directory=build)
+        @test occursin("if D = '1' then", read(joinpath(build, "d_tb.vhd"), String))
+    end
+end
+
 @testset "no method ambiguities" begin
     @test isempty(Test.detect_ambiguities(JHDL; recursive=true))
 end

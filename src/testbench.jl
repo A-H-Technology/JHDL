@@ -54,6 +54,9 @@ Base.@kwdef struct Testbench
     dut::DUT
     clk_period_ns::Constant = Constant("CLK_PERIOD", VHDL.Time(), 20)
     drain_cycles::Constant = Constant("DRAIN_CYCLES", VHDL.Integer(), 20)
+    # Name of a std_logic/boolean output. When set, the simulation finishes on the
+    # first rising edge it's high, and DRAIN_CYCLES only bounds how long that may take.
+    finish_on::Union{String,Nothing} = nothing
 end
 
 std_vals::Set = Set(['0', '1', 'Z', 'H', 'L', 'W', 'X', 'U', '-'])
@@ -135,7 +138,21 @@ read_field(::VHDL.String, x::AbstractString) = string(x)
 read_field(::VHDL.Character, x::AbstractString) = (length(x) == 1) ? x[1] : throw(ArgumentError("Cannot convert $x to a character"))
 
 
+function check_finish_on(testbench::Testbench)::Union{Port,Nothing}
+    name = testbench.finish_on
+    isnothing(name) && return nothing
+    i = findfirst(p -> p.name == name, testbench.dut.ports)
+    isnothing(i) && throw(ArgumentError("finish_on \"$name\" doesn't match any port of $(testbench.dut.name)"))
+    port = testbench.dut.ports[i]
+    port.dir == In && throw(ArgumentError("finish_on \"$name\" is an input; it has to be an output of the DUT"))
+    port.type isa Union{VHDL.std_logic,VHDL.Boolean} || throw(ArgumentError("finish_on \"$name\" is $(port.type), expected std_logic or boolean"))
+    return port
+end
+
+finish_condition(p::Port) = p.type isa VHDL.Boolean ? p.name : "$(p.name) = '1'"
+
 function construct_testbench(testbench::Testbench; directory::AbstractString="build")
+    finish_port = check_finish_on(testbench)
     input_file::Generic = Generic("INPUT_FILE", VHDL.String(), "samples.txt")
     output_file::Generic = Generic("OUTPUT_FILE", VHDL.String(), "output.txt")
     tb_dir = abspath(directory)
@@ -255,6 +272,11 @@ function construct_testbench(testbench::Testbench; directory::AbstractString="bu
     push!(lines, "wait until rising_edge($(testbench.dut.clk.name));")
     push!(lines, "end loop;")
 
+    # Back to the pre-stim values, so e.g. a VALID input doesn't stay high on the last row
+    for input in inputs
+        isnothing(input.value) || push!(lines, "$(input.name) <= $(literal(input.type, input.value));")
+    end
+
     push!(lines, "wait for $(testbench.drain_cycles.name) * $(testbench.clk_period_ns.name);")
     push!(lines, "finish;")
 
@@ -287,6 +309,12 @@ function construct_testbench(testbench::Testbench; directory::AbstractString="bu
             push!(lines, "write(L, \' \');")
         end
         push!(lines, "writeline(out_file, L);")
+
+        if !isnothing(finish_port)
+            push!(lines, "if $(finish_condition(finish_port)) then")
+            push!(lines, "finish;")
+            push!(lines, "end if;")
+        end
 
         push!(lines, "end loop;")
         push!(lines, "end process;")

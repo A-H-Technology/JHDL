@@ -43,13 +43,15 @@ outputs = simulate(sim)   # Y's captured values, one per clock cycle
 verify(sim, [PortStim("Y", u8, [5, 7, 9], Out)]; latency=1)
 ```
 
-The generated testbench drives `CLK` and `RST` for you. It holds reset for 5 cycles, feeds one row of inputs per cycle, and records the outputs on every rising edge. The DUT needs `CLK` and `RST` ports.
+The generated testbench drives `CLK` and `RST` for you. It holds reset for 5 cycles, feeds one row of inputs per cycle, and records the outputs on every rising edge. The DUT needs `CLK` and `RST` ports. After the last row, inputs go back to the initial values their `Port`s declare (a port declared with `nothing` keeps its last value).
+
+By default the simulation runs `DRAIN_CYCLES` (20) cycles past the last row. For a DUT that takes an unknown time to finish, pass `finish_on="DONE"` to `Testbench`, naming a `std_logic` or `boolean` output. The simulation then ends on the first rising edge where that output is high, and the drain cycles only bound how long it may take. The edge where it went high is the last captured sample.
 
 Vector outputs come back as integers, or `missing` for samples holding a metavalue (`U`, `X`, `Z`, ...). Stims are matched to input ports by name, in any order. Outputs are captured from every `Out`/`InOut` port, so don't pass stims for them. A stim shorter than the others is padded with `-` (or 0 for numeric types). `compare`/`verify` match outputs by name and skip the first `latency` samples.
 
 ## Tests
 
-The e2e tests build and simulate two small registered DUTs (`test/vhdl/`) through GHDL. Unit tests cover the field reader/writer, stim matching and `compare`:
+The e2e tests build and simulate three small DUTs (`test/vhdl/`) through GHDL. Unit tests cover the field reader/writer, stim matching, `finish_on` validation and `compare`:
 
 ```sh
 julia --project=. test/runtests.jl
