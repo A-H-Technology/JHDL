@@ -6,6 +6,10 @@ const u8 = VHDL.Unsigned(VHDL.Range(7, 0))
 const s8 = VHDL.Signed(VHDL.Range(7, 0))
 const v4 = VHDL.std_logic_vector(VHDL.Range(3, 0))
 
+# compare is per design; the adder's output is registered, so it lags its inputs by a cycle
+struct Adder <: Design end
+JHDL.compare(::Simulation{Adder}, expected, actual; tol=nothing) = actual.Y[2:length(expected.Y)+1] == expected.Y
+
 # Full round trip: generate a testbench for a real DUT, build and run it with
 # GHDL, and read the captured outputs back into Julia.
 @testset "e2e: registered adder through GHDL" begin
@@ -21,6 +25,7 @@ const v4 = VHDL.std_logic_vector(VHDL.Range(3, 0))
             dut=dut,
         )
         sim = Simulation(
+            design=Adder(),
             testbench=tb,
             sources=[joinpath(@__DIR__, "vhdl", "adder.vhd")],
             build_directory=build,
@@ -36,6 +41,9 @@ const v4 = VHDL.std_logic_vector(VHDL.Range(3, 0))
         # The first sample is captured on the same edge the first inputs are applied
         @test out.Y[2:length(a)+1] == a .+ b
         @test out.Y[1:length(a)] != a .+ b
+
+        @test verify(sim, (Y=a .+ b,); A=a, B=b)
+        @test !verify(sim, (Y=a .+ b .+ 1,); A=a, B=b)
     end
 end
 
@@ -56,6 +64,8 @@ end
         n = [1, -7]
 
         out = simulate(sim; N=n, EN=en, V=v, S=s)
+        # No design given, so there's no compare to dispatch to
+        @test_throws ArgumentError verify(sim, out; N=n, EN=en, V=v, S=s)
         @test keys(out) == (:SO, :VO, :BO, :NO)
         @test out.SO[2:5] == s .+ 3
         @test out.VO[2:5] == 0b1111 .⊻ v

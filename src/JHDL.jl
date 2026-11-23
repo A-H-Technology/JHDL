@@ -1,15 +1,21 @@
 module JHDL
 
-export Constant, DUT, Direction, Generic, In, InOut, Out, Port, Simulation,
+export Constant, DUT, Design, Direction, Generic, In, InOut, Out, Port, Simulation,
     Testbench, VHDL, Variable, compare, construct_testbench, simulate, to_Q_format,
     verify
 
 include("testbench.jl")
 include("entity.jl")
 
-abstract type Frame end
+# Subtype this with a singleton per design (`struct Adder <: Design end`) and pass it as
+# Simulation's `design`, so methods like `compare` can dispatch on `Simulation{Adder}`.
+abstract type Design end
 
-Base.@kwdef struct Simulation
+# For simulations nobody has written a compare for (yet)
+struct UnnamedDesign <: Design end
+
+Base.@kwdef struct Simulation{D<:Design}
+    design::D=UnnamedDesign()
     testbench::Testbench
     sources::Vector{String}
     build_directory::String="build/"
@@ -22,8 +28,11 @@ Base.@kwdef struct Simulation
     stop_time_ms::Int=5
 end
 
-function compare(expected::NamedTuple, actual::NamedTuple; tol::Union{Real,Nothing}=nothing)
-    throw(ArgumentError("compare is not implemented for this simulation"))
+# Extend per design: `JHDL.compare(sim::Simulation{Adder}, expected, actual; tol) = ...`.
+# `actual` is what `simulate` returned, `expected` is whatever was passed to `verify`.
+# Left untyped past `sim` so a method on Simulation{YourDesign} is always the more specific one
+function compare(sim::Simulation{D}, expected, actual; tol::Union{Real,Nothing}=nothing)::Bool where {D}
+    throw(ArgumentError("compare is not implemented for Simulation{$D}. Pass design=YourDesign() to Simulation and define JHDL.compare(sim::Simulation{YourDesign}, expected, actual; tol)"))
 end
 
 # Generates the testbench, runs it with one input value per cycle for each input port,
@@ -79,13 +88,13 @@ function input_columns(dut::DUT, stims::NamedTuple)::Vector{Column}
 end
 
 
-function verify(sim::Simulation, expected::NamedTuple, tol::Union{Real,Nothing}=nothing; stims...)::Bool
+function verify(sim::Simulation, expected, tol::Union{Real,Nothing}=nothing; stims...)::Bool
 
     actual = simulate(sim; stims...)
 
     println("Comparing results...")
 
-    passed = compare(expected, actual; tol=tol)
+    passed = compare(sim, expected, actual; tol=tol)::Bool
 
     println(passed ? "PASS" : "FAIL")
 
