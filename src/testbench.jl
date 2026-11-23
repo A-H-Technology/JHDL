@@ -13,11 +13,21 @@ struct Port
     dir::Direction
 end
 
-struct PortStim
+# A DUT port before it gets its name, which is its key in DUT's `ports` NamedTuple.
+# Built with `In(type)`, `Out(type)` or `InOut(type)`.
+struct PortDecl
+    type::VHDL.VHDLType
+    init::Any
+    dir::Direction
+end
+
+(dir::Direction)(type::VHDL.VHDLType; init=nothing) = PortDecl(type, init, dir)
+
+# One column of the input or output file
+struct Column
     name::String
     type::VHDL.VHDLType
-    value::Vector
-    dir::Direction
+    values::Vector
 end
 
 struct Constant
@@ -38,12 +48,25 @@ struct Variable
     value::Any
 end
 
-Base.@kwdef struct DUT
+struct DUT
     name::String
     generics::Vector{Generic}
+    # In declaration order, which is also the column order of the input and output files
     ports::Vector{Port}
-    clk::Port = Port("CLK", VHDL.std_logic(), 0, In)
-    rst::Port = Port("RST", VHDL.std_logic(), 1, In)
+    clk::Port
+    rst::Port
+
+    # Ports come in as a NamedTuple so names are unique and the order is the one written
+    function DUT(;
+        name::AbstractString,
+        generics::AbstractVector{Generic},
+        ports::NamedTuple{<:Any,<:Tuple{Vararg{PortDecl}}},
+        clk::Port=Port("CLK", VHDL.std_logic(), 0, In),
+        rst::Port=Port("RST", VHDL.std_logic(), 1, In),
+    )
+        named = [Port(String(k), d.type, d.init, d.dir) for (k, d) in pairs(ports)]
+        return new(name, generics, named, clk, rst)
+    end
 end
 
 Base.@kwdef struct Testbench
@@ -58,6 +81,8 @@ Base.@kwdef struct Testbench
     # first rising edge it's high, and DRAIN_CYCLES only bounds how long that may take.
     finish_on::Union{String,Nothing} = nothing
 end
+
+port_index(dut::DUT, name::AbstractString) = findfirst(p -> p.name == name, dut.ports)
 
 std_vals::Set = Set(['0', '1', 'Z', 'H', 'L', 'W', 'X', 'U', '-'])
 
@@ -141,7 +166,7 @@ read_field(::VHDL.Character, x::AbstractString) = (length(x) == 1) ? x[1] : thro
 function check_finish_on(testbench::Testbench)::Union{Port,Nothing}
     name = testbench.finish_on
     isnothing(name) && return nothing
-    i = findfirst(p -> p.name == name, testbench.dut.ports)
+    i = port_index(testbench.dut, name)
     isnothing(i) && throw(ArgumentError("finish_on \"$name\" doesn't match any port of $(testbench.dut.name)"))
     port = testbench.dut.ports[i]
     port.dir == In && throw(ArgumentError("finish_on \"$name\" is an input; it has to be an output of the DUT"))
@@ -331,5 +356,6 @@ function construct_testbench(testbench::Testbench; directory::AbstractString="bu
             println(io, line)
         end
     end
+    return filename
 end
 

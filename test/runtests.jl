@@ -1,6 +1,6 @@
 using Test
 using JHDL
-import JHDL: convert_generics, order_stims, read_field, read_test_data!, write_field, write_test_data
+import JHDL: Column, convert_generics, input_columns, read_field, read_test_data!, write_field, write_test_data
 
 const u8 = VHDL.Unsigned(VHDL.Range(7, 0))
 const s8 = VHDL.Signed(VHDL.Range(7, 0))
@@ -15,11 +15,7 @@ const v4 = VHDL.std_logic_vector(VHDL.Range(3, 0))
         dut = DUT(
             name="adder",
             generics=Generic[],
-            ports=[
-                Port("A", u8, 0, In),
-                Port("B", u8, 0, In),
-                Port("Y", u8, 0, Out),
-            ],
+            ports=(A=In(u8; init=0), B=In(u8; init=0), Y=Out(u8; init=0)),
         )
         tb = Testbench(
             name="adder_tb",
@@ -28,30 +24,22 @@ const v4 = VHDL.std_logic_vector(VHDL.Range(3, 0))
             signals=Port[],
             dut=dut,
         )
-
-        construct_testbench(tb; directory=build)
-        tb_file = joinpath(build, "adder_tb.vhd")
-        @test isfile(tb_file)
+        sim = Simulation(
+            testbench=tb,
+            sources=[joinpath(@__DIR__, "vhdl", "adder.vhd")],
+            build_directory=build,
+            generics=Generic[],
+        )
 
         a = [1, 2, 3, 100, 200, 255]
         b = [1, 5, 7, 27, 55, 0]
+        out = simulate(sim; A=a, B=b)
 
-        sim = Simulation(
-            testbench=tb,
-            sources=[joinpath(@__DIR__, "vhdl", "adder.vhd"), tb_file],
-            build_directory=build,
-            generics=Generic[],
-            stims=[
-                PortStim("A", u8, a, In),
-                PortStim("B", u8, b, In),
-            ],
-        )
-
-        outputs = simulate(sim)
-
+        @test isfile(joinpath(build, "adder_tb.vhd"))
+        @test keys(out) == (:Y,)
         # The first sample is captured on the same edge the first inputs are applied
-        @test compare([PortStim("Y", u8, a .+ b, Out)], outputs; latency=1)
-        @test !compare([PortStim("Y", u8, a .+ b, Out)], outputs; latency=0)
+        @test out.Y[2:length(a)+1] == a .+ b
+        @test out.Y[1:length(a)] != a .+ b
     end
 end
 
@@ -60,72 +48,62 @@ end
         dut = DUT(
             name="mixed",
             generics=[Generic("OFFSET", VHDL.Integer(), 0)],
-            ports=[
-                Port("S", s8, 0, In),
-                Port("V", v4, 0, In),
-                Port("EN", VHDL.Boolean(), false, In),
-                Port("N", VHDL.Integer(), 0, In),
-                Port("SO", s8, 0, Out),
-                Port("VO", v4, 0, Out),
-                Port("BO", VHDL.Boolean(), false, Out),
-                Port("NO", VHDL.Integer(), 0, Out),
-            ],
+            ports=(
+                S=In(s8; init=0),
+                V=In(v4; init=0),
+                EN=In(VHDL.Boolean(); init=false),
+                N=In(VHDL.Integer(); init=0),
+                SO=Out(s8; init=0),
+                VO=Out(v4; init=0),
+                BO=Out(VHDL.Boolean(); init=false),
+                NO=Out(VHDL.Integer(); init=0),
+            ),
         )
         tb = Testbench(name="mixed_tb", generics=Generic[], constants=Constant[], signals=Port[], dut=dut)
-        construct_testbench(tb; directory=build)
+        sim = Simulation(
+            testbench=tb,
+            sources=[joinpath(@__DIR__, "vhdl", "mixed.vhd")],
+            build_directory=build,
+            generics=[Generic("OFFSET", VHDL.Integer(), 3)],
+        )
 
         s = [-5, 100, -128, 0]
         v = [0b0000, 0b1010, 0b1111, 0b0110]
         en = [true, false, true, false]
         n = [1, -7]
 
-        sim = Simulation(
-            testbench=tb,
-            sources=[joinpath(@__DIR__, "vhdl", "mixed.vhd"), joinpath(build, "mixed_tb.vhd")],
-            build_directory=build,
-            generics=[Generic("OFFSET", VHDL.Integer(), 3)],
-            stims=[
-                PortStim("N", VHDL.Integer(), n, In),
-                PortStim("EN", VHDL.Boolean(), en, In),
-                PortStim("V", v4, v, In),
-                PortStim("S", s8, s, In),
-            ],
-        )
-
-        @test verify(sim, [
-                PortStim("SO", s8, s .+ 3, Out),
-                PortStim("VO", v4, 0b1111 .⊻ v, Out),
-                PortStim("BO", VHDL.Boolean(), .!en, Out),
-                PortStim("NO", VHDL.Integer(), [2 .* n; 0; 0], Out),
-            ]; latency=1)
+        out = simulate(sim; N=n, EN=en, V=v, S=s)
+        @test keys(out) == (:SO, :VO, :BO, :NO)
+        @test out.SO[2:5] == s .+ 3
+        @test out.VO[2:5] == 0b1111 .⊻ v
+        @test out.BO[2:5] == .!en
+        @test out.NO[2:5] == [2 .* n; 0; 0]
     end
 end
 
 
 const sl = VHDL.std_logic()
 
-function counter_sim(build; en, limit, finish_on=nothing, drain=20)
+function counter_sim(build; limit, finish_on=nothing, drain=20)
     dut = DUT(
         name="counter",
         generics=[Generic("LIMIT", VHDL.Natural(), 255)],
-        ports=[Port("EN", sl, 0, In), Port("COUNT", u8, nothing, Out), Port("DONE", sl, nothing, Out)],
+        ports=(EN=In(sl; init=0), COUNT=Out(u8), DONE=Out(sl)),
     )
     tb = Testbench(name="counter_tb", generics=Generic[], constants=Constant[], signals=Port[], dut=dut,
         drain_cycles=Constant("DRAIN_CYCLES", VHDL.Integer(), drain), finish_on=finish_on)
-    construct_testbench(tb; directory=build)
     return Simulation(
         testbench=tb,
-        sources=[joinpath(@__DIR__, "vhdl", "counter.vhd"), joinpath(build, "counter_tb.vhd")],
+        sources=[joinpath(@__DIR__, "vhdl", "counter.vhd")],
         build_directory=build,
         generics=[Generic("LIMIT", VHDL.Natural(), limit)],
-        stims=[PortStim("EN", sl, en, In)],
     )
 end
 
 @testset "e2e: inputs return to their initial value after the stim" begin
     mktempdir() do build
-        out = simulate(counter_sim(build; en=[1, 1, 1], limit=255))
-        count = out[1].value
+        out = simulate(counter_sim(build; limit=255); EN=[1, 1, 1])
+        count = out.COUNT
         # EN held at '1' would keep counting through the 20 drain cycles
         @test count[end] == 3
     end
@@ -133,8 +111,8 @@ end
 
 @testset "e2e: finish_on ends the simulation on the first edge it's high" begin
     mktempdir() do build
-        out = simulate(counter_sim(build; en=fill(1, 10), limit=4, finish_on="DONE", drain=1000))
-        count, done = out[1].value, out[2].value
+        out = simulate(counter_sim(build; limit=4, finish_on="DONE", drain=1000); EN=fill(1, 10))
+        count, done = out.COUNT, out.DONE
         @test done[end] == '1' && count[end] == 4
         @test all(==('0'), done[1:end-1])
         @test length(done) == 5
@@ -142,7 +120,7 @@ end
 end
 
 @testset "finish_on validation" begin
-    dut = DUT(name="d", generics=Generic[], ports=[Port("A", u8, 0, In), Port("Y", u8, 0, Out), Port("D", sl, 0, Out)])
+    dut = DUT(name="d", generics=Generic[], ports=(A=In(u8; init=0), Y=Out(u8; init=0), D=Out(sl; init=0)))
     tb(f) = Testbench(name="d_tb", generics=Generic[], constants=Constant[], signals=Port[], dut=dut, finish_on=f)
     mktempdir() do build
         @test_throws ArgumentError construct_testbench(tb("NOPE"); directory=build)
@@ -188,38 +166,33 @@ end
 @testset "test data files" begin
     mktempdir() do dir
         path = joinpath(dir, "in.txt")
-        write_test_data(PortStim[], path)
+        write_test_data(Column[], path)
         @test read(path, String) == ""
 
-        write_test_data([PortStim("A", u8, [1, 2], In), PortStim("N", VHDL.Integer(), [7], In)], path)
+        write_test_data([Column("A", u8, [1, 2]), Column("N", VHDL.Integer(), [7])], path)
         @test readlines(path) == ["00000001 7 ", "00000010 0 "]
 
         write(path, "20 ns 00000011\n")
-        out = read_test_data!([PortStim("T", VHDL.Time(), Any[], Out), PortStim("Y", u8, Any[], Out)], path)
-        @test out[1].value == [20.0] && out[2].value == [3]
+        out = read_test_data!([Column("T", VHDL.Time(), Any[]), Column("Y", u8, Any[])], path)
+        @test out[1].values == [20.0] && out[2].values == [3]
 
         write(path, "00000011 1\n")
-        @test_throws ArgumentError read_test_data!([PortStim("Y", u8, Any[], Out)], path)
+        @test_throws ArgumentError read_test_data!([Column("Y", u8, Any[])], path)
     end
 end
 
-@testset "order_stims" begin
-    dut = DUT(name="d", generics=Generic[], ports=[Port("A", u8, 0, In), Port("B", u8, 0, In), Port("Y", u8, 0, Out)])
-    a = PortStim("A", u8, [1], In)
-    b = PortStim("B", u8, [2], In)
-    @test [x.name for x in order_stims(dut, [b, a])] == ["A", "B"]
-    @test_throws ArgumentError order_stims(dut, [a])
-    @test_throws ArgumentError order_stims(dut, [a, b, PortStim("Y", u8, Int[], Out)])
-    @test_throws ArgumentError order_stims(dut, [a, b, PortStim("C", u8, [1], In)])
-    @test_throws ArgumentError order_stims(dut, [a, b, a])
-    @test_throws ArgumentError order_stims(dut, [a, PortStim("B", s8, [2], In)])
+@testset "DUT ports" begin
+    dut = DUT(name="d", generics=Generic[], ports=(A=In(u8), Y=Out(u8; init=3), B=InOut(s8)))
+    @test [(p.name, p.type, p.value, p.dir) for p in dut.ports] ==
+          [("A", u8, nothing, In), ("Y", u8, 3, Out), ("B", s8, nothing, InOut)]
 end
 
-@testset "compare" begin
-    actual = [PortStim("Y", VHDL.Integer(), Any[0, 10, 21, missing], Out)]
-    @test compare([PortStim("Y", VHDL.Integer(), [10, 20], Out)], actual; latency=1, tol=1)
-    @test !compare([PortStim("Y", VHDL.Integer(), [10, 20], Out)], actual; latency=1)
-    @test !compare([PortStim("Y", VHDL.Integer(), [21, 0], Out)], actual; latency=2)
-    @test !compare([PortStim("Y", VHDL.Integer(), [1, 2, 3, 4], Out)], actual; latency=1)
-    @test_throws ArgumentError compare([PortStim("Z", VHDL.Integer(), [1], Out)], actual)
+@testset "input_columns" begin
+    dut = DUT(name="d", generics=Generic[], ports=(A=In(u8), Y=Out(u8), B=In(s8)))
+    inputs = input_columns(dut, (B=[2], A=1:1))
+    @test [(c.name, c.type, c.values) for c in inputs] == [("A", u8, [1]), ("B", s8, [2])]
+    @test_throws ArgumentError input_columns(dut, (A=[1],))
+    @test_throws ArgumentError input_columns(dut, (A=[1], B=[2], Y=[3]))
+    @test_throws ArgumentError input_columns(dut, (A=[1], B=[2], C=[3]))
+    @test_throws ArgumentError input_columns(dut, (A=[1], B=2))
 end

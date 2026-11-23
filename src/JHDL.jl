@@ -1,6 +1,6 @@
 module JHDL
 
-export Constant, DUT, Direction, Generic, In, InOut, Out, Port, PortStim, Simulation,
+export Constant, DUT, Direction, Generic, In, InOut, Out, Port, Simulation,
     Testbench, VHDL, Variable, compare, construct_testbench, simulate, to_Q_format,
     verify
 
@@ -19,54 +19,36 @@ Base.@kwdef struct Simulation
     output_path::String="output.txt"
 
     stop_time_ms::Int=5
-
-    stims::Vector{PortStim}
 end
 
-function compare(expected::AbstractVector{PortStim}, actual::AbstractVector{PortStim}; tol::Union{Real,Nothing}=nothing, latency::Integer=0)::Bool
-    latency >= 0 || throw(ArgumentError("latency must be nonnegative"))
-    passed = true
-    for e in expected
-        i = findfirst(a -> a.name == e.name, actual)
-        isnothing(i) && throw(ArgumentError("No captured output named \"$(e.name)\""))
-        got = actual[i].value[latency+1:end]
-        if length(got) < length(e.value)
-            println("$(e.name): expected $(length(e.value)) samples, only $(length(got)) captured after latency $latency")
-            passed = false
-            continue
-        end
-        for (k, (want, have)) in enumerate(zip(e.value, got))
-            if !sample_matches(want, have, tol)
-                println("$(e.name)[$k]: expected $(repr(want)), got $(repr(have))")
-                passed = false
-                break
-            end
-        end
-    end
-    return passed
+function compare(expected::NamedTuple, actual::NamedTuple; tol::Union{Real,Nothing}=nothing)
+    throw(ArgumentError("compare is not implemented for this simulation"))
 end
 
-sample_matches(want::Real, have::Real, tol::Real) = abs(want - have) <= tol
-sample_matches(want, have, _) = isequal(want, have)
-
-function simulate(sim::Simulation)::AbstractVector{PortStim}
+# Generates the testbench, runs it with one input value per cycle for each input port,
+# given as keyword arguments (`simulate(sim; A=[1, 2], B=[3, 4])`), and returns the
+# captured outputs as a NamedTuple of vectors, one value per cycle (`out.Y`).
+function simulate(sim::Simulation; stims...)::NamedTuple
     build_directory = abspath(sim.build_directory)
 
     input_path = joinpath(build_directory, sim.input_path)
     output_path = joinpath(build_directory, sim.output_path)
 
-    inputs = order_stims(sim.testbench.dut, sim.stims)
-    outputs = [PortStim(p.name, p.type, Any[], p.dir) for p in sim.testbench.dut.ports if p.dir == Out || p.dir == InOut]
+    dut = sim.testbench.dut
+    inputs = input_columns(dut, values(stims))
+    outputs = [Column(p.name, p.type, Any[]) for p in dut.ports if p.dir != In]
 
     mkpath(build_directory)
 
     isfile(output_path) && rm(output_path)
 
+    tb_file = construct_testbench(sim.testbench; directory=build_directory)
+
     write_test_data(inputs, input_path)
 
     println("Building project...")
 
-    GHDL_build(sim)
+    GHDL_build(sim, tb_file)
 
     println("Running testbench $(sim.testbench.name)...")
 
@@ -74,42 +56,35 @@ function simulate(sim::Simulation)::AbstractVector{PortStim}
 
     isfile(output_path) || throw(ErrorException("The testbench did not produce \"$(sim.output_path)\""))
 
-    return read_test_data!(outputs, output_path)
+    read_test_data!(outputs, output_path)
+    return NamedTuple(Symbol(c.name) => c.values for c in outputs)
 end
 
 
-port_index(dut::DUT, name::AbstractString) = findfirst(p -> p.name == name, dut.ports)
-
-# The testbench reads input columns in DUT port order, so stims have to be written in that order too
-function order_stims(dut::DUT, stims::AbstractVector{PortStim})::Vector{PortStim}
-    by_name = foldl(stims; init=Dict{String,PortStim}()) do d::Dict{String,PortStim}, stim::PortStim
-        i = port_index(dut, stim.name)
-        isnothing(i) && throw(ArgumentError("Stim \"$(stim.name)\" doesn't match any port of $(dut.name)"))
-        port = dut.ports[i]
-        port.dir == Out && throw(ArgumentError("Stim \"$(stim.name)\" is an output; outputs are captured, not stimulated"))
-        stim.dir == port.dir || throw(ArgumentError("Stim \"$(stim.name)\" is $(stim.dir) but the port is $(port.dir)"))
-        stim.type == port.type || throw(ArgumentError("Stim \"$(stim.name)\" is $(stim.type) but the port is $(port.type)"))
-        haskey(d, stim.name) && throw(ArgumentError("Stim \"$(stim.name)\" is given twice"))
-        d[stim.name] = stim
-        d
+# Built by walking dut.ports, the same list construct_testbench takes its read order
+# and types from, so the columns of the input file can't come out in a different order
+function input_columns(dut::DUT, stims::NamedTuple)::Vector{Column}
+    inputs = filter(p -> p.dir != Out, dut.ports)
+    for name in keys(stims)
+        any(p -> p.name == String(name), inputs) || throw(ArgumentError("Stim \"$name\" isn't an input of $(dut.name)"))
     end
-    inputs = PortStim[]
-    for port in dut.ports
-        port.dir == Out && continue
-        haskey(by_name, port.name) || throw(ArgumentError("No stim for input \"$(port.name)\" of $(dut.name)"))
-        push!(inputs, by_name[port.name])
+    return map(inputs) do port
+        name = Symbol(port.name)
+        haskey(stims, name) || throw(ArgumentError("No stim for input \"$name\" of $(dut.name)"))
+        stim = stims[name]
+        stim isa AbstractVector || throw(ArgumentError("Stim \"$name\" has to be a vector, one value per cycle"))
+        Column(port.name, port.type, collect(stim))
     end
-    return inputs
 end
 
 
-function verify(sim::Simulation, expected::AbstractVector{PortStim}; tol::Union{Real,Nothing}=nothing, latency::Integer=0)::Bool
+function verify(sim::Simulation, expected::NamedTuple, tol::Union{Real,Nothing}=nothing; stims...)::Bool
 
-    actual = simulate(sim)
+    actual = simulate(sim; stims...)
 
     println("Comparing results...")
 
-    passed = compare(expected, actual; tol=tol, latency=latency)
+    passed = compare(expected, actual; tol=tol)
 
     println(passed ? "PASS" : "FAIL")
 
@@ -137,15 +112,15 @@ function to_Q_format(x::Real, N::Integer, M::Integer)::BigInt
 end
 
 
-function write_test_data(data::AbstractVector{PortStim}, filename::AbstractString="samples.txt")::Nothing
-    N = maximum(x -> length(x.value), data; init=0)
+function write_test_data(data::AbstractVector{Column}, filename::AbstractString="samples.txt")::Nothing
+    N = maximum(x -> length(x.values), data; init=0)
     open(filename, "w") do io
         for i in 1:N
-            for port in data
-                if (i > length(port.value))
-                    print(io, pad_field(port.type) * " ")
+            for column in data
+                if (i > length(column.values))
+                    print(io, pad_field(column.type) * " ")
                 else
-                    print(io, write_field(port.type, port.value[i]) * " ")
+                    print(io, write_field(column.type, column.values[i]) * " ")
                 end
             end
             println(io)
@@ -154,7 +129,7 @@ function write_test_data(data::AbstractVector{PortStim}, filename::AbstractStrin
     return nothing
 end
 
-function read_test_data!(output::AbstractVector{PortStim}, filename::AbstractString="results.txt",)
+function read_test_data!(output::AbstractVector{Column}, filename::AbstractString="results.txt",)
     open(filename, "r") do io
         for (line_number, line) in enumerate(eachline(io))
             tokens = split(line)
@@ -165,12 +140,12 @@ function read_test_data!(output::AbstractVector{PortStim}, filename::AbstractStr
             length(tokens) == expected || throw(ArgumentError("Line $line_number of \"$filename\" has $(length(tokens)) fields, expected $expected"))
 
             k = 1
-            for port in output
-                n = field_tokens(port.type)
+            for column in output
+                n = field_tokens(column.type)
                 try
-                    push!(port.value, read_field(port.type, join(tokens[k:k+n-1], " ")))
+                    push!(column.values, read_field(column.type, join(tokens[k:k+n-1], " ")))
                 catch err
-                    throw(ArgumentError("Failed to parse $(port.name) on line $line_number of \"$filename\". "*sprint(showerror, err)))
+                    throw(ArgumentError("Failed to parse $(column.name) on line $line_number of \"$filename\". "*sprint(showerror, err)))
                 end
                 k += n
             end
@@ -189,11 +164,11 @@ function convert_generics(generics::AbstractVector{Generic})::Vector{String}
 end
 
 
-function GHDL_build(sim::Simulation)::Nothing
+function GHDL_build(sim::Simulation, tb_file::AbstractString)::Nothing
 
     build_directory = abspath(sim.build_directory)
 
-    sources = abspath.(sim.sources)
+    sources = [abspath.(sim.sources); tb_file]
 
     mkpath(build_directory)
 
