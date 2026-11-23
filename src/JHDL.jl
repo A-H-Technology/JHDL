@@ -5,6 +5,7 @@ export Constant, DUT, Direction, Generic, In, InOut, Out, Port, Simulation,
     verify
 
 include("testbench.jl")
+include("entity.jl")
 
 abstract type Frame end
 

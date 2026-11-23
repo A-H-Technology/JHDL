@@ -12,11 +12,7 @@ const v4 = VHDL.std_logic_vector(VHDL.Range(3, 0))
     Sys.which("ghdl") === nothing && error("ghdl not found on PATH; the e2e test needs it")
 
     mktempdir() do build
-        dut = DUT(
-            name="adder",
-            generics=Generic[],
-            ports=(A=In(u8; init=0), B=In(u8; init=0), Y=Out(u8; init=0)),
-        )
+        dut = DUT(joinpath(@__DIR__, "vhdl", "adder.vhd"); init=(A=0, B=0))
         tb = Testbench(
             name="adder_tb",
             generics=Generic[],
@@ -45,20 +41,7 @@ end
 
 @testset "e2e: mixed port types, generic override, shuffled and short stims" begin
     mktempdir() do build
-        dut = DUT(
-            name="mixed",
-            generics=[Generic("OFFSET", VHDL.Integer(), 0)],
-            ports=(
-                S=In(s8; init=0),
-                V=In(v4; init=0),
-                EN=In(VHDL.Boolean(); init=false),
-                N=In(VHDL.Integer(); init=0),
-                SO=Out(s8; init=0),
-                VO=Out(v4; init=0),
-                BO=Out(VHDL.Boolean(); init=false),
-                NO=Out(VHDL.Integer(); init=0),
-            ),
-        )
+        dut = DUT(joinpath(@__DIR__, "vhdl", "mixed.vhd"))
         tb = Testbench(name="mixed_tb", generics=Generic[], constants=Constant[], signals=Port[], dut=dut)
         sim = Simulation(
             testbench=tb,
@@ -179,6 +162,25 @@ end
         write(path, "00000011 1\n")
         @test_throws ArgumentError read_test_data!([Column("Y", u8, Any[])], path)
     end
+end
+
+@testset "DUT read from VHDL" begin
+    widths = joinpath(@__DIR__, "vhdl", "widths.vhd")
+    dut = DUT(widths; init=(A=1,))
+    @test dut.name == "Widths"
+    @test [(g.name, g.type, g.value) for g in dut.generics] ==
+          [("WIDTH", VHDL.Natural(), 4), ("FLAG", VHDL.Boolean(), true)]
+    u4 = VHDL.Unsigned(VHDL.Range(3, 0))
+    @test [(p.name, p.type, p.value, p.dir) for p in dut.ports] == [
+        ("A", u4, 1, In),
+        ("Bb", u4, nothing, In),
+        ("Wide", VHDL.std_logic_vector(VHDL.Range(10, 0)), nothing, Out),
+        ("Up", VHDL.Signed(VHDL.Range(0, 4)), nothing, InOut),
+    ]
+    @test (dut.clk.name, dut.rst.name) == ("Clk", "Rst")
+    @test_throws ArgumentError DUT(widths; init=(Nope=1,))
+    @test_throws ArgumentError DUT(widths; clk="CK")
+    @test_throws ArgumentError DUT(widths; entity="other")
 end
 
 @testset "DUT ports" begin
