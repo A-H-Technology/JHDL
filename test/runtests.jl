@@ -6,9 +6,30 @@ const u8 = VHDL.Unsigned(VHDL.Range(7, 0))
 const s8 = VHDL.Signed(VHDL.Range(7, 0))
 const v4 = VHDL.std_logic_vector(VHDL.Range(3, 0))
 
-# compare is per design; the adder's output is registered, so it lags its inputs by a cycle
-struct Adder <: Design end
-JHDL.compare(::Simulation{Adder}, expected, actual; tol=nothing) = actual.Y[2:length(expected.Y)+1] == expected.Y
+# Fields are the adder's inputs, so the default stims applies. Its output is registered,
+# so it lags the inputs by a cycle.
+struct AdderCase <: TestCase
+    A::Vector{Int}
+    B::Vector{Int}
+end
+JHDL.compare(c::AdderCase, actual) = actual.Y[2:length(c.A)+1] == c.A .+ c.B
+
+# Carries an expected output too, so it picks its stims itself
+struct AdderExpecting <: TestCase
+    a::Vector{Int}
+    b::Vector{Int}
+    y::Vector{Int}
+end
+JHDL.stims(c::AdderExpecting) = (A=c.a, B=c.b)
+JHDL.compare(c::AdderExpecting, actual) = actual.Y[2:length(c.y)+1] == c.y
+
+# Never gets a compare method
+struct MixedCase <: TestCase
+    S::Vector{Int}
+    V::Vector{Int}
+    EN::Vector{Bool}
+    N::Vector{Int}
+end
 
 # Full round trip: generate a testbench for a real DUT, build and run it with
 # GHDL, and read the captured outputs back into Julia.
@@ -25,7 +46,6 @@ JHDL.compare(::Simulation{Adder}, expected, actual; tol=nothing) = actual.Y[2:le
             dut=dut,
         )
         sim = Simulation(
-            design=Adder(),
             testbench=tb,
             sources=[joinpath(@__DIR__, "vhdl", "adder.vhd")],
             build_directory=build,
@@ -42,8 +62,9 @@ JHDL.compare(::Simulation{Adder}, expected, actual; tol=nothing) = actual.Y[2:le
         @test out.Y[2:length(a)+1] == a .+ b
         @test out.Y[1:length(a)] != a .+ b
 
-        @test verify(sim, (Y=a .+ b,); A=a, B=b)
-        @test !verify(sim, (Y=a .+ b .+ 1,); A=a, B=b)
+        @test verify(sim, AdderCase(a, b))
+        @test verify(sim, AdderExpecting(a, b, a .+ b))
+        @test !verify(sim, AdderExpecting(a, b, a .+ b .+ 1))
     end
 end
 
@@ -64,8 +85,7 @@ end
         n = [1, -7]
 
         out = simulate(sim; N=n, EN=en, V=v, S=s)
-        # No design given, so there's no compare to dispatch to
-        @test_throws ArgumentError verify(sim, out; N=n, EN=en, V=v, S=s)
+        @test_throws ArgumentError verify(sim, MixedCase(s, v, en, n))
         @test keys(out) == (:SO, :VO, :BO, :NO)
         @test out.SO[2:5] == s .+ 3
         @test out.VO[2:5] == 0b1111 .⊻ v
@@ -172,6 +192,11 @@ end
         write(path, "00000011 1\n")
         @test_throws ArgumentError read_test_data!([Column("Y", u8, Any[])], path)
     end
+end
+
+@testset "default stims" begin
+    @test stims(AdderCase([1], [2])) == (A=[1], B=[2])
+    @test stims(MixedCase([1], [2], [true], [3])) == (S=[1], V=[2], EN=[true], N=[3])
 end
 
 @testset "DUT read from VHDL" begin

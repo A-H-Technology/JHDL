@@ -1,21 +1,13 @@
 module JHDL
 
-export Constant, DUT, Design, Direction, Generic, In, InOut, Out, Port, Simulation,
-    Testbench, VHDL, Variable, compare, construct_testbench, simulate, to_Q_format,
+export Constant, DUT, Direction, Generic, In, InOut, Out, Port, Simulation, TestCase,
+    Testbench, VHDL, Variable, compare, construct_testbench, simulate, stims, to_Q_format,
     verify
 
 include("testbench.jl")
 include("entity.jl")
 
-# Subtype this with a singleton per design (`struct Adder <: Design end`) and pass it as
-# Simulation's `design`, so methods like `compare` can dispatch on `Simulation{Adder}`.
-abstract type Design end
-
-# For simulations nobody has written a compare for (yet)
-struct UnnamedDesign <: Design end
-
-Base.@kwdef struct Simulation{D<:Design}
-    design::D=UnnamedDesign()
+Base.@kwdef struct Simulation
     testbench::Testbench
     sources::Vector{String}
     build_directory::String="build/"
@@ -28,11 +20,23 @@ Base.@kwdef struct Simulation{D<:Design}
     stop_time_ms::Int=5
 end
 
-# Extend per design: `JHDL.compare(sim::Simulation{Adder}, expected, actual; tol) = ...`.
-# `actual` is what `simulate` returned, `expected` is whatever was passed to `verify`.
-# Left untyped past `sim` so a method on Simulation{YourDesign} is always the more specific one
-function compare(sim::Simulation{D}, expected, actual; tol::Union{Real,Nothing}=nothing)::Bool where {D}
-    throw(ArgumentError("compare is not implemented for Simulation{$D}. Pass design=YourDesign() to Simulation and define JHDL.compare(sim::Simulation{YourDesign}, expected, actual; tol)"))
+# One test of a design: its inputs, plus whatever its `compare` needs to judge the
+# outputs (expected values, a tolerance, ...). Subtype it per kind of test and run it
+# with `verify(sim, case)`; one Simulation can run any number of cases.
+abstract type TestCase end
+
+# The inputs to drive, as `simulate` takes them. By default every field of the case,
+# by name, so a case whose fields are exactly the DUT's inputs needs no method. Cases
+# carrying anything else (expected values, a tolerance) define their own.
+function stims(case::TestCase)::NamedTuple
+    names = fieldnames(typeof(case))
+    return NamedTuple{names}(map(n -> getfield(case, n), names))
+end
+
+# Whether `actual`, what `simulate` returned, passes this case. Has to be defined per
+# TestCase subtype; `actual` is left untyped so that method is always the more specific one.
+function compare(case::TestCase, actual)::Bool
+    throw(ArgumentError("compare is not implemented for $(typeof(case)); define JHDL.compare(case::$(typeof(case)), actual)"))
 end
 
 # Generates the testbench, runs it with one input value per cycle for each input port,
@@ -88,13 +92,13 @@ function input_columns(dut::DUT, stims::NamedTuple)::Vector{Column}
 end
 
 
-function verify(sim::Simulation, expected, tol::Union{Real,Nothing}=nothing; stims...)::Bool
+function verify(sim::Simulation, case::TestCase)::Bool
 
-    actual = simulate(sim; stims...)
+    actual = simulate(sim; stims(case)...)
 
     println("Comparing results...")
 
-    passed = compare(sim, expected, actual; tol=tol)::Bool
+    passed = compare(case, actual)::Bool
 
     println(passed ? "PASS" : "FAIL")
 
