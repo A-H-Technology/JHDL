@@ -6,16 +6,9 @@ abstract type Frame end
 Base.@kwdef struct Simulation
     testbench::Testbench
     sources::Vector{String}
-    build_directory::String="build/"
-    generics::Vector{Generic}
-
     wave_path::String="waveform.fst"
-    input_path::String="samples.txt"
-    output_path::String="output.txt"
 
     stop_time_ms::Int=5
-
-    stims::Vector{PortStim}
 end
 
 function compare(expected::AbstractVector{PortStim}, actual::AbstractVector{PortStim}; tol::Union{Real,Nothing}=nothing)
@@ -23,15 +16,15 @@ function compare(expected::AbstractVector{PortStim}, actual::AbstractVector{Port
 end
 
 function simulate(sim::Simulation)::AbstractVector{PortStim}
-    build_directory = abspath(sim.build_directory)
+    directory = abspath(sim.directory)
+    input_path = joinpath(directory, sim.testbench.input_path)
+    output_path = joinpath(directory, sim.testbench.output_path)
+    stims = vcat(sim.testbench.signals, sim.testbench.dut.ports)
 
-    input_path = joinpath(build_directory, sim.input_path)
-    output_path = joinpath(build_directory, sim.output_path)
+    inputs = filter(x -> ((x.dir == In) || (x.dir == InOut)), stims)
+    outputs = filter(x -> ((x.dir == Out) || (x.dir == InOut)), stims)
 
-    inputs = filter(x -> ((x.dir == In) || (x.dir == InOut)), sim.stims)
-    outputs = filter(x -> ((x.dir == Out) || (x.dir == InOut)), sim.stims)
-
-    mkpath(build_directory)
+    mkpath(directory)
 
     isfile(output_path) && rm(output_path)
 
@@ -45,7 +38,7 @@ function simulate(sim::Simulation)::AbstractVector{PortStim}
 
     GHDL_run(sim)
 
-    isfile(output_path) || throw(ErrorException("The testbench did not produce \"$(sim.output_path)\""))
+    isfile(output_path) || throw(ErrorException("The testbench did not produce \"$(sim.testbench.output_path)\""))
 
     return read_test_data(outputs, output_path)
 end
@@ -135,46 +128,45 @@ end
 
 function GHDL_build(sim::Simulation)::Nothing
 
-    build_directory = abspath(sim.build_directory)
+    directory = abspath(sim.testbench.directory)
 
     sources = abspath.(sim.sources)
 
-    mkpath(build_directory)
+    mkpath(directory)
 
     run(Cmd(
         `ghdl -i --std=08
             $sources`;
-        dir=build_directory
+        dir=directory
     ))
 
     run(Cmd(
         `ghdl -m --std=08
             $(sim.name)`;
-        dir=build_directory
+        dir=directory
     ))
     return nothing
 end
 
 function GHDL_run(sim::Simulation)::Nothing
 
-    build_directory = abspath(sim.build_directory)
+    directory = abspath(sim.testbench.directory)
 
 
-    mkpath(build_directory)
+    mkpath(directory)
 
-    generics = convert_generics(sim.generics)
-    push!(generics, "-gINPUT_FILE="*sim.input_path)
-    push!(generics, "-gOUTPUT_FILE="*sim.output_path)
+    generics = convert_generics(sim.testbench.dut.generics)
 
     wave_args = isempty(sim.wave_path) ? String[] : ["--fst=$(sim.wave_path)"]
+    stop_time = sim.stop_time_ms < 0 ? String[] : ["$(sim.sim_time_ms)ms"]
 
     run(Cmd(
         `ghdl -r --std=08
             $(sim.name)
             $generics
             $wave_args
-            --stop-time=$(sim.stop_time)`;
-        dir=build_directory
+            --stop-time=$(stop_time)`;
+        dir=directory
     ))
     return nothing
 end

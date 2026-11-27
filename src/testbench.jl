@@ -1,6 +1,5 @@
 include("VHDL.jl")
 using .VHDL
-import .VHDL: declare
 @enum Direction In Out InOut
 
 
@@ -48,9 +47,11 @@ end
 
 Base.@kwdef struct Testbench
     name::String
-    generics::Vector{Generic}
     constants::Vector{Constant}
     signals::Vector{Port}
+    directory::String="build/"
+    input_path::String="samples.txt"
+    output_path::String="output.txt"
     dut::DUT
     clk_period_ns::Constant = Constant("CLK_PERIOD", VHDL.Time(), 20)
     drain_cycles::Constant = Constant("DRAIN_CYCLES", VHDL.Integer(), 20)
@@ -104,8 +105,8 @@ function write_field(t::VHDL.Signed, x::Integer)
     return string(big(x) & ((big(1) << w) - 1), base=2, pad=w)
 end
 write_field(::Union{VHDL.Integer,VHDL.Boolean,VHDL.Positive,VHDL.Natural,VHDL.std_logic,VHDL.Character,VHDL.String,VHDL.Time}, x) = string(x)
-write_field(::std_logic, ::Nothing) = write_field(std_logic(), '-')
-write_field(t::std_logic_vector, ::Nothing) = map(x -> write_field.(std_logic(), '-'), 1:(abs(t.range.first-t.range.last)+1))
+write_field(::VHDL.std_logic, ::Nothing) = write_field(VHDL.std_logic(), '-')
+write_field(t::VHDL.std_logic_vector, ::Nothing) = map(x -> write_field.(VHDL.std_logic(), '-'), 1:(abs(t.range.first-t.range.last)+1))
 write_field(t, x::Nothing) = write_field(t, 0)
 
 read_field(t::Union{VHDL.Integer,VHDL.Positive,VHDL.Natural,VHDL.Time}, x) = isnothing(tryparse(Int, x)) ? throw(ArgumentError("Cannot convert $x to a boolean")) : parse(Int, x)
@@ -126,11 +127,9 @@ read_field(t::VHDL.Character, x::Char) = x
 read_field(t::VHDL.Character, x::Integer) = 0 <= x < 10 ? string(x)[1] : throw(ArgumentError("Cannot convert $x to a character"))
 
 
-function construct_testbench(testbench::Testbench; directory::AbstractString="build")
-    input_file::Generic = Generic("INPUT_FILE", VHDL.String(), "samples.txt")
-    output_file::Generic = Generic("OUTPUT_FILE", VHDL.String(), "output.txt")
+function construct_testbench(testbench::Testbench)
     root_dir = abspath(".")
-    tb_dir = root_dir*"/"*directory*"/"
+    tb_dir = root_dir*"/"*testbench.directory*"/"
     mkpath(tb_dir)
 
     lines = String[]
@@ -144,7 +143,7 @@ function construct_testbench(testbench::Testbench; directory::AbstractString="bu
 
     # Entity Declaration
     push!(lines, "entity $(testbench.name)  is")
-    generics = vcat(testbench.generics, testbench.dut.generics, input_file.name, output_file.name)
+    generics = testbench.dut.generics
     if !(isempty(generics))
         N = length(generics)
         push!(lines, "generic (")
@@ -178,11 +177,11 @@ function construct_testbench(testbench::Testbench; directory::AbstractString="bu
 
     ports = vcat(testbench.dut.ports, testbench.dut.clk, testbench.dut.rst)
     # Generic Map
-    if !(isempty(testbench.dut.generics))
-        N = length(testbench.dut.generics)
+    if !(isempty(generics))
+        N = length(generics)
         push!(lines, "generic map( ")
         for i in 1:N
-            push!(lines, "$(testbench.dut.generics[i].name) => $(testbench.dut.generics[i].name)" * (i < N ? "," : ""))
+            push!(lines, "$(generics[i].name) => $(generics[i].name)" * (i < N ? "," : ""))
         end
         push!(lines, ")" * (isempty(ports) ? ";" : ""))
     end
